@@ -28,10 +28,10 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// 4) Helper: Generate a Firebase verification link (handleCodeInApp = true)
+// 4) Helper: Generate a Firebase verification link (handleCodeInApp = false)
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
-    // If you prefer a simple redirect, set handleCodeInApp: false
+    // If you prefer a simple redirect, set handleCodeInApp to false
     url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyemail",
     handleCodeInApp: false, 
   };
@@ -68,7 +68,7 @@ function getVerificationEmailTemplate(verificationLink, username) {
   <body>
     <div class="container">
       <div class="header">
-        <!-- If you have a real School Chow logo, update the src below -->
+        <!-- Using the School Chow logo from verifyemail path -->
         <img src="https://schoolchow.com/verifyemail/logo.png" alt="">
       </div>
       <div class="content">
@@ -87,12 +87,13 @@ function getVerificationEmailTemplate(verificationLink, username) {
   `;
 }
 
-// 6) Helper: Delete unverified user + Firestore docs
+// 6) Helper: Delete an existing unverified user and remove Firestore documents with uid field equal to the user's uid.
 async function deleteUserAccount(user) {
   if (!user) return;
   try {
     // Remove user doc(s) from Firestore
-    const snapshot = await db.collection('users').where('uid', '==', user.uid).get();
+    const usersRef = db.collection('users');
+    const snapshot = await usersRef.where('uid', '==', user.uid).get();
     if (!snapshot.empty) {
       snapshot.forEach(async (doc) => {
         await doc.ref.delete();
@@ -121,18 +122,13 @@ app.post('/register', async (req, res) => {
     } catch (error) {
       if (error.code !== 'auth/user-not-found') throw error;
     }
-
     // If unverified user exists, delete them
     if (existingUser && !existingUser.emailVerified) {
       await deleteUserAccount(existingUser);
     } else if (existingUser && existingUser.emailVerified) {
       return res.status(400).json({ error: 'Email is already in use and verified. Please log in.' });
     }
-
-    // Create new user in Auth
     const userRecord = await auth.createUser({ email, password, displayName: username });
-
-    // Send verification email
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, username);
     await transporter.sendMail({
@@ -141,8 +137,6 @@ app.post('/register', async (req, res) => {
       subject: 'Verify Your Email for School Chow',
       html: emailHTML,
     });
-
-    // Add user doc
     await db.collection('users').add({
       uid: userRecord.uid,
       email: userRecord.email,
@@ -150,9 +144,8 @@ app.post('/register', async (req, res) => {
       firstname: username,
       ordernumber: 0,
       totalorder: 0,
-      debt: 0,
+      debt: 0
     });
-
     res.status(200).json({ message: 'User registered successfully. Verification email sent.' });
   } catch (error) {
     console.error('Registration error:', error);
@@ -163,7 +156,6 @@ app.post('/register', async (req, res) => {
 // 8) Register a vendor (just like your snippet)
 app.post('/vendor/register', async (req, res) => {
   const { email, password, phoneno, surname, firstname, businessname, businessCategory, selectedSchool, address, profilepic } = req.body;
-
   if (!email || !password || !phoneno || !surname || !firstname || !businessname || !businessCategory || !selectedSchool || !address || !profilepic) {
     return res.status(400).json({ error: 'Please fill in all fields for vendor registration.' });
   }
@@ -174,17 +166,12 @@ app.post('/vendor/register', async (req, res) => {
     } catch (error) {
       if (error.code !== 'auth/user-not-found') throw error;
     }
-
     if (existingUser && !existingUser.emailVerified) {
       await deleteUserAccount(existingUser);
     } else if (existingUser && existingUser.emailVerified) {
       return res.status(400).json({ error: 'Email is already in use and verified. Please log in.' });
     }
-
-    // Create new vendor in Auth
     const userRecord = await auth.createUser({ email, password, displayName: firstname });
-
-    // Add vendor doc to Firestore
     await db.collection('users').add({
       uid: userRecord.uid,
       email: userRecord.email,
@@ -198,10 +185,8 @@ app.post('/vendor/register', async (req, res) => {
       businessname,
       businesscategory: businessCategory,
       now: 'open',
-      balance: 0,
+      balance: 0
     });
-
-    // Send verification email
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, firstname);
     await transporter.sendMail({
@@ -210,7 +195,6 @@ app.post('/vendor/register', async (req, res) => {
       subject: 'Verify Your Email for School Chow',
       html: emailHTML,
     });
-
     res.status(200).json({ message: 'Vendor registered successfully. Verification email sent.' });
   } catch (error) {
     console.error('Vendor registration error:', error);
@@ -221,15 +205,10 @@ app.post('/vendor/register', async (req, res) => {
 // 9) Register a rider
 app.post('/rider/register', async (req, res) => {
   const { email, password, phoneno, surname, firstname, school, address } = req.body;
-
-  // The snippet you gave shows all fields are required:
-  // if (!email || !password || !phoneno || !surname || !firstname || !selectedSchool || !address) ...
-  // but let's match the snippet precisely:
   if (!email || !password || !phoneno || !surname || !firstname || !school || !address) {
-    return res.status(400).json({ error: 'Please fill in all fields' });
+    return res.status(400).json({ error: 'Please fill in all fields for rider registration.' });
   }
   try {
-    // Check existing user
     let existingUser;
     try {
       existingUser = await auth.getUserByEmail(email);
@@ -241,24 +220,18 @@ app.post('/rider/register', async (req, res) => {
     } else if (existingUser && existingUser.emailVerified) {
       return res.status(400).json({ error: 'Email is already in use and verified. Please log in.' });
     }
-
-    // Create new rider in Auth
     const userRecord = await auth.createUser({ email, password });
-
-    // Add rider doc
     await db.collection('users').add({
       uid: userRecord.uid,
       email: userRecord.email,
-      role: 'driver',  // or "driver" if you prefer
+      role: 'rider', // or "driver" if preferred
       phoneno,
       surname,
       firstname,
       school,
       address,
-      balance: 0,
+      balance: 0
     });
-
-    // Send verification email
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, firstname);
     await transporter.sendMail({
@@ -267,7 +240,6 @@ app.post('/rider/register', async (req, res) => {
       subject: 'Verify Your Email for School Chow',
       html: emailHTML,
     });
-
     res.status(200).json({ message: 'Rider registered successfully. Verification email sent.' });
   } catch (error) {
     console.error('Rider registration error:', error);
@@ -275,7 +247,28 @@ app.post('/rider/register', async (req, res) => {
   }
 });
 
-// 10) Start the server
+// 10) Delete unverified user
+app.delete("/delete-unverified", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "No email provided." });
+    }
+    const user = await auth.getUserByEmail(email);
+    if (user.emailVerified) {
+      return res.status(400).json({ message: "User is already verified." });
+    }
+    await auth.deleteUser(user.uid);
+    const snapshot = await db.collection("users").where("uid", "==", user.uid).get();
+    snapshot.forEach((doc) => doc.ref.delete());
+    res.status(200).json({ message: "Deleted unverified user successfully." });
+  } catch (error) {
+    console.error("Error deleting unverified user:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 11) Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
