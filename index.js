@@ -66,7 +66,7 @@ function getVerificationEmailTemplate(verificationLink, username) {
     <div class="container">
       <div class="header">
         <!-- The alt attribute is empty to avoid any label before the logo -->
-        <img src="https://example.com/school-chow-logo.png" alt="">
+        <img src="https://schoolchow.com/verifyemail/logo.png" alt="">
       </div>
       <div class="content">
         <h1>Welcome to School Chow, ${username}!</h1>
