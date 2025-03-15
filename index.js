@@ -31,7 +31,7 @@ const transporter = nodemailer.createTransport({
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
     // Set this to your deep-link URL; for development, you can use a custom scheme (e.g., "schoolchow://emailVerified")
-    url: process.env.VERIFICATION_CONTINUE_URL || "schoolchow.com/verifyemail",
+    url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyemail",
     handleCodeInApp: true,
   };
   return admin.auth().generateEmailVerificationLink(email, actionCodeSettings);
