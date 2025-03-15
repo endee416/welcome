@@ -69,14 +69,14 @@ function getVerificationEmailTemplate(verificationLink, username) {
     <div class="container">
       <div class="header">
         <!-- If you have a real School Chow logo, update the src below -->
-        <img src="https://example.com/school-chow-logo.png" alt="">
+        <img src="https://schoolchow.com/verifyemail/logo.png" alt="">
       </div>
       <div class="content">
         <h1>Welcome to School Chow, ${username}!</h1>
         <p>
           You’re this close 🤏 to unlocking the tastiest student discounts, the fastest food deliveries, and the best local eats! But first, let’s make sure it’s really you.
         </p>
-        
+        <a class="button" href="${verificationLink}">Verify Email</a>
       </div>
        <div style="background:#eee; padding:15px; text-align:center; font-size:12px; color:#888;">
       &copy; 2025 School Chow. All rights reserved.
