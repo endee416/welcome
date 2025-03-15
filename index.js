@@ -31,16 +31,15 @@ const transporter = nodemailer.createTransport({
 // 4) Helper: Generate a Firebase verification link (handleCodeInApp = false)
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
-    // If you prefer a simple redirect, set handleCodeInApp to false
     url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyemail",
-    handleCodeInApp: false, 
+    handleCodeInApp: false,
   };
   const link = await auth.generateEmailVerificationLink(email, actionCodeSettings);
   console.log("Generated Verification Link:", link);
   return link;
 }
 
-// 5) Helper: HTML Email Template (unchanged from your snippet)
+// 5) Helper: HTML Email Template (Rider-style design, unchanged from your snippet)
 function getVerificationEmailTemplate(verificationLink, username) {
   return `
   <!DOCTYPE html>
@@ -62,13 +61,11 @@ function getVerificationEmailTemplate(verificationLink, username) {
         .content p { font-size: 1rem; }
       }
     </style>
-    <!-- Kadwa font -->
     <link href="https://fonts.googleapis.com/css2?family=Kadwa&display=swap" rel="stylesheet">
   </head>
   <body>
     <div class="container">
       <div class="header">
-        <!-- Using the School Chow logo from verifyemail path -->
         <img src="https://schoolchow.com/verifyemail/logo.png" alt="">
       </div>
       <div class="content">
@@ -78,20 +75,19 @@ function getVerificationEmailTemplate(verificationLink, username) {
         </p>
         <a class="button" href="${verificationLink}">Verify Email</a>
       </div>
-       <div style="background:#eee; padding:15px; text-align:center; font-size:12px; color:#888;">
-      &copy; 2025 School Chow. All rights reserved.
-    </div>
+      <div style="background:#eee; padding:15px; text-align:center; font-size:12px; color:#888;">
+        &copy; 2025 School Chow. All rights reserved.
+      </div>
     </div>
   </body>
   </html>
   `;
 }
 
-// 6) Helper: Delete an existing unverified user and remove Firestore documents with uid field equal to the user's uid.
+// 6) Helper: Delete an existing unverified user and remove Firestore docs
 async function deleteUserAccount(user) {
   if (!user) return;
   try {
-    // Remove user doc(s) from Firestore
     const usersRef = db.collection('users');
     const snapshot = await usersRef.where('uid', '==', user.uid).get();
     if (!snapshot.empty) {
@@ -100,7 +96,6 @@ async function deleteUserAccount(user) {
         console.log(`Deleted Firestore entry for uid: ${user.uid}`);
       });
     }
-    // Delete user from Firebase Auth
     await auth.deleteUser(user.uid);
     console.log(`Deleted unverified user: ${user.email}`);
   } catch (error) {
@@ -109,9 +104,13 @@ async function deleteUserAccount(user) {
   }
 }
 
-// 7) Register a "regular user" (just like your snippet)
+/**
+ * 7) Register a "regular user"
+ * Expected fields: email, password, username (plus optional surname, phoneno, school)
+ * Regular users do not have balance or address.
+ */
 app.post('/register', async (req, res) => {
-  const { email, password, username } = req.body;
+  const { email, password, username, surname, phoneno, school } = req.body;
   if (!email || !password || !username) {
     return res.status(400).json({ error: 'Please provide email, password, and username.' });
   }
@@ -122,13 +121,25 @@ app.post('/register', async (req, res) => {
     } catch (error) {
       if (error.code !== 'auth/user-not-found') throw error;
     }
-    // If unverified user exists, delete them
     if (existingUser && !existingUser.emailVerified) {
       await deleteUserAccount(existingUser);
     } else if (existingUser && existingUser.emailVerified) {
       return res.status(400).json({ error: 'Email is already in use and verified. Please log in.' });
     }
     const userRecord = await auth.createUser({ email, password, displayName: username });
+    await db.collection('users').add({
+      uid: userRecord.uid,
+      email: userRecord.email,
+      role: 'regular_user',
+      firstname: username,
+      surname: surname || "",
+      phoneno: phoneno || "",
+      school: school || "",
+      // Regular users: no balance or address
+      ordernumber: 0,
+      totalorder: 0,
+      debt: 0,
+    });
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, username);
     await transporter.sendMail({
@@ -137,23 +148,18 @@ app.post('/register', async (req, res) => {
       subject: 'Verify Your Email for School Chow',
       html: emailHTML,
     });
-    await db.collection('users').add({
-      uid: userRecord.uid,
-      email: userRecord.email,
-      role: 'regular_user',
-      firstname: username,
-      ordernumber: 0,
-      totalorder: 0,
-      debt: 0
-    });
     res.status(200).json({ message: 'User registered successfully. Verification email sent.' });
   } catch (error) {
     console.error('Registration error:', error);
-    res.status(500).json({ error: 'Internal server error.' });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// 8) Register a vendor (just like your snippet)
+/**
+ * 8) Register a vendor
+ * Expected fields: email, password, phoneno, surname, firstname, businessname, businessCategory, selectedSchool, address, profilepic
+ * Vendors have a balance field (initialized to 0).
+ */
 app.post('/vendor/register', async (req, res) => {
   const { email, password, phoneno, surname, firstname, businessname, businessCategory, selectedSchool, address, profilepic } = req.body;
   if (!email || !password || !phoneno || !surname || !firstname || !businessname || !businessCategory || !selectedSchool || !address || !profilepic) {
@@ -185,7 +191,7 @@ app.post('/vendor/register', async (req, res) => {
       businessname,
       businesscategory: businessCategory,
       now: 'open',
-      balance: 0
+      balance: 0,
     });
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, firstname);
@@ -198,11 +204,15 @@ app.post('/vendor/register', async (req, res) => {
     res.status(200).json({ message: 'Vendor registered successfully. Verification email sent.' });
   } catch (error) {
     console.error('Vendor registration error:', error);
-    res.status(500).json({ error: 'Internal server error.' });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// 9) Register a rider
+/**
+ * 9) Register a rider
+ * Expected fields: email, password, phoneno, surname, firstname, school, address
+ * Riders have a balance field (initialized to 0).
+ */
 app.post('/rider/register', async (req, res) => {
   const { email, password, phoneno, surname, firstname, school, address } = req.body;
   if (!email || !password || !phoneno || !surname || !firstname || !school || !address) {
@@ -230,7 +240,7 @@ app.post('/rider/register', async (req, res) => {
       firstname,
       school,
       address,
-      balance: 0
+      balance: 0,
     });
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, firstname);
@@ -243,11 +253,13 @@ app.post('/rider/register', async (req, res) => {
     res.status(200).json({ message: 'Rider registered successfully. Verification email sent.' });
   } catch (error) {
     console.error('Rider registration error:', error);
-    res.status(500).json({ error: 'Internal server error.' });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// 10) Delete unverified user
+/**
+ * 10) Delete unverified user endpoint.
+ */
 app.delete("/delete-unverified", async (req, res) => {
   try {
     const { email } = req.body;
@@ -268,7 +280,9 @@ app.delete("/delete-unverified", async (req, res) => {
   }
 });
 
-// 11) Start the server
+/**
+ * 11) Start the server
+ */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
