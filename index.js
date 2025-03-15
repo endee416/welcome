@@ -31,7 +31,7 @@ const transporter = nodemailer.createTransport({
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
     // Set this to your deep-link URL; for development, you can use a custom scheme (e.g., "schoolchow://emailVerified")
-    url: process.env.VERIFICATION_CONTINUE_URL || "schoolchow://emailVerified",
+    url: process.env.VERIFICATION_CONTINUE_URL || "schoolchow.com/verifyemail",
     handleCodeInApp: true,
   };
   return admin.auth().generateEmailVerificationLink(email, actionCodeSettings);
@@ -59,7 +59,7 @@ function getVerificationEmailTemplate(verificationLink, username) {
     <div class="container">
       <div class="header">
         <!-- Replace the src with your actual logo URL -->
-        <img src="https://example.com/school-chow-logo.png" alt="School Chow Logo">
+        <img src="https://schoolchow.com/verifyemail/logo.png" alt="School Chow Logo">
         <h1>Welcome to School Chow!</h1>
       </div>
       <div class="content">
