@@ -8,7 +8,7 @@ const admin = require('firebase-admin');
 const app = express();
 app.use(bodyParser.json());
 
-// Initialize Firebase Admin SDK
+// Initialize Firebase Admin SDK using your service account JSON
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -16,66 +16,27 @@ admin.initializeApp({
 const auth = admin.auth();
 const db = admin.firestore();
 
-// Configure Nodemailer with Hostinger SMTP settings.
+// Configure Nodemailer with your Hostinger SMTP settings.
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST, // e.g., smtp.hostinger.com
-  port: Number(process.env.SMTP_PORT), // 465 for SSL or 587 for TLS
-  secure: Number(process.env.SMTP_PORT) === 465, // true for port 465, false otherwise
+  host: process.env.SMTP_HOST,         // e.g., smtp.hostinger.com
+  port: Number(process.env.SMTP_PORT),   // 465 for SSL or 587 for TLS
+  secure: Number(process.env.SMTP_PORT) === 465, // true if using port 465 (SSL)
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
 });
 
-// Helper: Upload image to Cloudinary (used for vendor registration)
-// Assumes your vendor registration payload includes a "selectedImage" object with a URI
-async function uploadImage(media) {
-  if (!media || !media.uri) {
-    throw new Error('No image provided');
-  }
-  const formData = new FormData();
-  try {
-    const response = await fetch(media.uri);
-    const blob = await response.blob();
-
-    // Append file details to formData. Adjust fileName and mimeType as needed.
-    formData.append('file', {
-      uri: media.uri,
-      name: media.fileName || `upload.${media.mimeType ? media.mimeType.split("/")[1] : "jpg"}`,
-      type: media.mimeType || "image/jpeg",
-    });
-    formData.append('upload_preset', 'Chownow2');
-    formData.append('cloud_name', 'ddlubqotl');
-
-    const uploadResponse = await fetch('https://api.cloudinary.com/v1_1/ddlubqotl/upload', {
-      method: 'POST',
-      body: formData,
-      headers: {
-        'Accept': "application/json",
-        // Let fetch set Content-Type with proper boundary when using formData.
-      },
-    });
-    const responseJson = await uploadResponse.json();
-    if (responseJson.error) {
-      throw new Error(responseJson.error.message);
-    }
-    return responseJson; // Contains secure_url, etc.
-  } catch (error) {
-    console.error("Upload failed:", error);
-    throw error;
-  }
-}
-
-// Helper: Generate Firebase email verification link (using HTTPS and handleCodeInApp: false)
+// Generate a verification link with handleCodeInApp: false
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
-    url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyEmail",
+    url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyemail",
     handleCodeInApp: false,
   };
   return auth.generateEmailVerificationLink(email, actionCodeSettings);
 }
 
-// Helper: Custom HTML email template for verification
+// Custom HTML email template for verification
 function getVerificationEmailTemplate(verificationLink, username) {
   return `
   <!DOCTYPE html>
@@ -102,7 +63,7 @@ function getVerificationEmailTemplate(verificationLink, username) {
   <body>
     <div class="container">
       <div class="header">
-        <!-- Remove label by setting alt="" -->
+        <!-- The alt attribute is empty to avoid any label before the logo -->
         <img src="https://schoolchow.com/verifyemail/logo.png" alt="">
       </div>
       <div class="content">
@@ -120,11 +81,10 @@ function getVerificationEmailTemplate(verificationLink, username) {
   `;
 }
 
-// Helper: Delete an existing unverified user and remove their Firestore document (where uid field equals user's uid)
+// Delete an existing unverified user and remove their Firestore document where the 'uid' field equals the user's uid
 async function deleteUserAccount(user) {
   if (!user) return;
   try {
-    // Query Firestore "users" collection where field uid equals user.uid
     const usersRef = db.collection('users');
     const snapshot = await usersRef.where('uid', '==', user.uid).get();
     if (!snapshot.empty) {
@@ -133,7 +93,6 @@ async function deleteUserAccount(user) {
         console.log(`Deleted Firestore entry for uid: ${user.uid}`);
       });
     }
-    // Delete user from Firebase Authentication
     await auth.deleteUser(user.uid);
     console.log(`Deleted unverified user: ${user.email}`);
   } catch (error) {
@@ -142,7 +101,7 @@ async function deleteUserAccount(user) {
   }
 }
 
-// Endpoint for regular user registration
+// Regular user registration endpoint
 app.post('/register', async (req, res) => {
   const { email, password, username } = req.body;
   if (!email || !password || !username) {
@@ -160,13 +119,11 @@ app.post('/register', async (req, res) => {
     } else if (existingUser && existingUser.emailVerified) {
       return res.status(400).json({ error: 'Email is already in use and verified. Please log in.' });
     }
-    // Create new user
     const userRecord = await auth.createUser({
       email,
       password,
       displayName: username,
     });
-    // Generate verification link and send email
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, username);
     await transporter.sendMail({
@@ -175,7 +132,6 @@ app.post('/register', async (req, res) => {
       subject: 'Verify Your Email for School Chow',
       html: emailHTML,
     });
-    // Add user document to Firestore for regular user
     await db.collection('users').add({
       uid: userRecord.uid,
       email: userRecord.email,
@@ -192,11 +148,12 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// Endpoint for vendor registration
+// Vendor registration endpoint
 app.post('/vendor/register', async (req, res) => {
-  const { email, password, phoneno, surname, firstname, businessname, businessCategory, selectedSchool, address, selectedImage } = req.body;
-  // Check required fields (for vendor, all fields including image must be provided)
-  if (!email || !password || !phoneno || !surname || !firstname || !businessname || !businessCategory || !selectedSchool || !address || !selectedImage) {
+  // For vendor registration, we expect that the image has already been uploaded on the client side.
+  // The client should send a "profilepic" field containing the secure URL.
+  const { email, password, phoneno, surname, firstname, businessname, businessCategory, selectedSchool, address, profilepic } = req.body;
+  if (!email || !password || !phoneno || !surname || !firstname || !businessname || !businessCategory || !selectedSchool || !address || !profilepic) {
     return res.status(400).json({ error: 'Please fill in all fields for vendor registration.' });
   }
   try {
@@ -211,18 +168,12 @@ app.post('/vendor/register', async (req, res) => {
     } else if (existingUser && existingUser.emailVerified) {
       return res.status(400).json({ error: 'Email is already in use and verified. Please log in.' });
     }
-    // Create new vendor user
     const userRecord = await auth.createUser({
       email,
       password,
       displayName: firstname,
     });
-    // Upload image to Cloudinary and get secure URL
-    const uploadResult = await uploadImage(selectedImage);
-    if (!uploadResult || !uploadResult.secure_url) {
-      return res.status(500).json({ error: 'Image upload failed.' });
-    }
-    // Add vendor document to Firestore
+    // Add vendor details to Firestore; we now use the profilepic URL provided by the client.
     await db.collection('users').add({
       uid: userRecord.uid,
       email: userRecord.email,
@@ -230,7 +181,7 @@ app.post('/vendor/register', async (req, res) => {
       phoneno,
       surname,
       firstname,
-      profilepic: uploadResult.secure_url,
+      profilepic, // Already a secure URL from the client-side upload
       school: selectedSchool,
       address,
       businessname,
@@ -238,7 +189,6 @@ app.post('/vendor/register', async (req, res) => {
       now: 'open',
       balance: 0
     });
-    // Generate verification link and send email
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, firstname);
     await transporter.sendMail({
@@ -254,7 +204,7 @@ app.post('/vendor/register', async (req, res) => {
   }
 });
 
-// Start server on Railway's provided port or default to 3000
+// Start the server using Railway's provided PORT or default to 3000
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
