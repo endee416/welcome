@@ -30,7 +30,7 @@ const transporter = nodemailer.createTransport({
 // Helper: Generate a Firebase email verification link with handleCodeInApp set to false.
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
-    url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyEmail",
+    url: "schoolchow://verifyEmail",
     handleCodeInApp: true,
   };
   const link = await auth.generateEmailVerificationLink(email, actionCodeSettings);
