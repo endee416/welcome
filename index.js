@@ -74,12 +74,13 @@ function getVerificationEmailTemplate(verificationLink, username) {
       <div class="content">
         <h1>Welcome to School Chow, ${username}!</h1>
         <p>
-          Thanks for signing up! Click the button below to verify your email and start enjoying the best food deals for students.
+          You’re this close 🤏 to unlocking the tastiest student discounts, the fastest food deliveries, and the best local eats! But first, let’s make sure it’s really you.
         </p>
-        <a class="button" href="${verificationLink}">Verify Email</a>
-        <p>If the button doesn't work, copy and paste the link below into your browser:</p>
-        <p><a href="${verificationLink}">${verificationLink}</a></p>
+        
       </div>
+       <div style="background:#eee; padding:15px; text-align:center; font-size:12px; color:#888;">
+      &copy; 2025 School Chow. All rights reserved.
+    </div>
     </div>
   </body>
   </html>
