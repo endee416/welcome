@@ -8,7 +8,7 @@ const admin = require('firebase-admin');
 const app = express();
 app.use(bodyParser.json());
 
-// Initialize Firebase Admin SDK using your service account JSON
+// Initialize Firebase Admin SDK using the service account JSON stored in environment variables.
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -19,24 +19,26 @@ const db = admin.firestore();
 // Configure Nodemailer with your Hostinger SMTP settings.
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,         // e.g., smtp.hostinger.com
-  port: Number(process.env.SMTP_PORT),   // 465 for SSL or 587 for TLS
-  secure: Number(process.env.SMTP_PORT) === 465, // true if using port 465 (SSL)
+  port: Number(process.env.SMTP_PORT),   // e.g., 465 for SSL or 587 for TLS
+  secure: Number(process.env.SMTP_PORT) === 465, // true if using port 465
   auth: {
-    user: process.env.SMTP_USER,
+    user: process.env.SMTP_USER,         // your custom email address
     pass: process.env.SMTP_PASS,
   },
 });
 
-// Generate a verification link with handleCodeInApp: false
+// Helper: Generate a Firebase email verification link with handleCodeInApp set to false.
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
-    url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyemail",
+    url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyEmail",
     handleCodeInApp: false,
   };
-  return auth.generateEmailVerificationLink(email, actionCodeSettings);
+  const link = await auth.generateEmailVerificationLink(email, actionCodeSettings);
+  console.log("Generated Verification Link:", link);
+  return link;
 }
 
-// Custom HTML email template for verification
+// Helper: Custom HTML email template.
 function getVerificationEmailTemplate(verificationLink, username) {
   return `
   <!DOCTYPE html>
@@ -64,7 +66,7 @@ function getVerificationEmailTemplate(verificationLink, username) {
     <div class="container">
       <div class="header">
         <!-- The alt attribute is empty to avoid any label before the logo -->
-        <img src="https://schoolchow.com/verifyemail/logo.png" alt="">
+        <img src="https://example.com/school-chow-logo.png" alt="">
       </div>
       <div class="content">
         <h1>Welcome to School Chow, ${username}!</h1>
@@ -81,7 +83,7 @@ function getVerificationEmailTemplate(verificationLink, username) {
   `;
 }
 
-// Delete an existing unverified user and remove their Firestore document where the 'uid' field equals the user's uid
+// Helper: Delete an existing unverified user and remove Firestore documents with uid field equal to the user's uid.
 async function deleteUserAccount(user) {
   if (!user) return;
   try {
@@ -101,7 +103,7 @@ async function deleteUserAccount(user) {
   }
 }
 
-// Regular user registration endpoint
+// Regular user registration endpoint.
 app.post('/register', async (req, res) => {
   const { email, password, username } = req.body;
   if (!email || !password || !username) {
@@ -119,11 +121,7 @@ app.post('/register', async (req, res) => {
     } else if (existingUser && existingUser.emailVerified) {
       return res.status(400).json({ error: 'Email is already in use and verified. Please log in.' });
     }
-    const userRecord = await auth.createUser({
-      email,
-      password,
-      displayName: username,
-    });
+    const userRecord = await auth.createUser({ email, password, displayName: username });
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, username);
     await transporter.sendMail({
@@ -148,10 +146,8 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// Vendor registration endpoint
+// Vendor registration endpoint.
 app.post('/vendor/register', async (req, res) => {
-  // For vendor registration, we expect that the image has already been uploaded on the client side.
-  // The client should send a "profilepic" field containing the secure URL.
   const { email, password, phoneno, surname, firstname, businessname, businessCategory, selectedSchool, address, profilepic } = req.body;
   if (!email || !password || !phoneno || !surname || !firstname || !businessname || !businessCategory || !selectedSchool || !address || !profilepic) {
     return res.status(400).json({ error: 'Please fill in all fields for vendor registration.' });
@@ -168,12 +164,8 @@ app.post('/vendor/register', async (req, res) => {
     } else if (existingUser && existingUser.emailVerified) {
       return res.status(400).json({ error: 'Email is already in use and verified. Please log in.' });
     }
-    const userRecord = await auth.createUser({
-      email,
-      password,
-      displayName: firstname,
-    });
-    // Add vendor details to Firestore; we now use the profilepic URL provided by the client.
+    const userRecord = await auth.createUser({ email, password, displayName: firstname });
+    // Save vendor details to Firestore; profilepic is expected as a secure URL provided by the client.
     await db.collection('users').add({
       uid: userRecord.uid,
       email: userRecord.email,
@@ -181,7 +173,7 @@ app.post('/vendor/register', async (req, res) => {
       phoneno,
       surname,
       firstname,
-      profilepic, // Already a secure URL from the client-side upload
+      profilepic,
       school: selectedSchool,
       address,
       businessname,
@@ -204,7 +196,7 @@ app.post('/vendor/register', async (req, res) => {
   }
 });
 
-// Start the server using Railway's provided PORT or default to 3000
+// Start the server on Railway's provided PORT or default to 3000.
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
