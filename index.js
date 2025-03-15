@@ -31,7 +31,7 @@ const transporter = nodemailer.createTransport({
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
     url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyEmail",
-    handleCodeInApp: false,
+    handleCodeInApp: true,
   };
   const link = await auth.generateEmailVerificationLink(email, actionCodeSettings);
   console.log("Generated Verification Link:", link);
