@@ -125,7 +125,7 @@ function getPasswordResetEmailTemplate(resetLink, username) {
         <img src="https://schoolchow.com/verifyemail/logo.png" alt="">
       </div>
       <div class="content">
-        <h1>Reset Your Password, ${username}!</h1>
+        <h1>Reset Your Password!</h1>
         <p>
           It looks like you requested a password reset. Click the button below to reset your password.
         </p>
