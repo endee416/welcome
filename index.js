@@ -1,15 +1,13 @@
-// index.js
-require('dotenv').config();
-const express = require('express');
-const bodyParser = require('body-parser');
-const nodemailer = require('nodemailer');
-const admin = require('firebase-admin');
+require("dotenv").config();
+const express = require("express");
+const bodyParser = require("body-parser");
+const nodemailer = require("nodemailer");
+const admin = require("firebase-admin");
 
-// 1) Create Express app
 const app = express();
 app.use(bodyParser.json());
 
-// 2) Initialize Firebase Admin using service account from env
+// 1) Initialize Firebase Admin using the service account from env
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -17,10 +15,10 @@ admin.initializeApp({
 const auth = admin.auth();
 const db = admin.firestore();
 
-// 3) Configure Nodemailer (Hostinger SMTP)
+// 2) Configure Nodemailer (Hostinger SMTP)
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,         // e.g., smtp.hostinger.com
-  port: Number(process.env.SMTP_PORT), // 465 for SSL or 587 for TLS
+  port: Number(process.env.SMTP_PORT),   // e.g., 465 (SSL) or 587 (TLS)
   secure: Number(process.env.SMTP_PORT) === 465,
   auth: {
     user: process.env.SMTP_USER,
@@ -28,18 +26,29 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// 4) Helper: Generate a Firebase verification link (handleCodeInApp = false)
+// 3) Helper: Generate a Firebase verification link for email verification
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
     url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyemail",
-    handleCodeInApp: false,
+    handleCodeInApp: false, // standard HTTPS redirect
   };
   const link = await auth.generateEmailVerificationLink(email, actionCodeSettings);
   console.log("Generated Verification Link:", link);
   return link;
 }
 
-// 5) Helper: HTML Email Template (Rider-style design, unchanged from your snippet)
+// 4) Helper: Generate a Firebase password reset link
+async function generatePasswordResetLink(email) {
+  const actionCodeSettings = {
+    url: process.env.PASSWORD_RESET_CONTINUE_URL || "https://schoolchow.com/resetpassword",
+    handleCodeInApp: false,
+  };
+  const link = await auth.generatePasswordResetLink(email, actionCodeSettings);
+  console.log("Generated Password Reset Link:", link);
+  return link;
+}
+
+// 5) Helper: HTML Email Template for Verification (Rider-style design)
 function getVerificationEmailTemplate(verificationLink, username) {
   return `
   <!DOCTYPE html>
@@ -50,12 +59,13 @@ function getVerificationEmailTemplate(verificationLink, username) {
     <style>
       body { font-family: 'Kadwa', sans-serif; margin: 0; padding: 0; background-color: #f7f7f7; }
       .container { max-width: 600px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; }
-      .header { text-align: center; padding: 20px; }
+      .header { text-align: center; padding: 20px; background-color: #0c513f; }
       .header img { max-width: 150px; display: block; margin: 0 auto; }
-      .content { padding: 20px; text-align: center; }
-      .content h1 { font-size: 2.5rem; margin-bottom: 0.5em; }
-      .content p { font-size: 1.2rem; line-height: 1.6; }
+      .content { padding: 30px; text-align: center; }
+      .content h1 { font-size: 2.5rem; margin-bottom: 0.5em; color: #0c513f; }
+      .content p { font-size: 1.2rem; line-height: 1.6; color: #444; }
       .button { background-color: #0c513f; color: #fff; padding: 12px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }
+      .footer { background: #eee; padding: 15px; text-align: center; font-size: 12px; color: #888; }
       @media (max-width: 600px) {
         .content h1 { font-size: 2rem; }
         .content p { font-size: 1rem; }
@@ -75,7 +85,7 @@ function getVerificationEmailTemplate(verificationLink, username) {
         </p>
         <a class="button" href="${verificationLink}">Verify Email</a>
       </div>
-      <div style="background:#eee; padding:15px; text-align:center; font-size:12px; color:#888;">
+      <div class="footer">
         &copy; 2025 School Chow. All rights reserved.
       </div>
     </div>
@@ -84,7 +94,53 @@ function getVerificationEmailTemplate(verificationLink, username) {
   `;
 }
 
-// 6) Helper: Delete an existing unverified user and remove Firestore docs
+// 6) Helper: HTML Email Template for Password Reset
+function getPasswordResetEmailTemplate(resetLink, username) {
+  return `
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Reset Your Password - School Chow</title>
+    <style>
+      body { font-family: 'Kadwa', sans-serif; margin: 0; padding: 0; background-color: #f7f7f7; }
+      .container { max-width: 600px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; }
+      .header { text-align: center; padding: 20px; background-color: #0c513f; }
+      .header img { max-width: 150px; display: block; margin: 0 auto; }
+      .content { padding: 30px; text-align: center; }
+      .content h1 { font-size: 2.5rem; margin-bottom: 0.5em; color: #0c513f; }
+      .content p { font-size: 1.2rem; line-height: 1.6; color: #444; }
+      .button { background-color: #0c513f; color: #fff; padding: 12px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }
+      .footer { background: #eee; padding: 15px; text-align: center; font-size: 12px; color: #888; }
+      @media (max-width: 600px) {
+        .content h1 { font-size: 2rem; }
+        .content p { font-size: 1rem; }
+      }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Kadwa&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <img src="https://schoolchow.com/verifyemail/logo.png" alt="">
+      </div>
+      <div class="content">
+        <h1>Reset Your Password, ${username}!</h1>
+        <p>
+          It looks like you requested a password reset. Click the button below to reset your password.
+        </p>
+        <a class="button" href="${resetLink}">Reset Password</a>
+      </div>
+      <div class="footer">
+        &copy; 2025 School Chow. All rights reserved.
+      </div>
+    </div>
+  </body>
+  </html>
+  `;
+}
+
+// 7) Helper: Delete unverified user and their Firestore docs
 async function deleteUserAccount(user) {
   if (!user) return;
   try {
@@ -104,11 +160,7 @@ async function deleteUserAccount(user) {
   }
 }
 
-/**
- * 7) Register a "regular user"
- * Expected fields: email, password, username (plus optional surname, phoneno, school)
- * Regular users do not have balance or address.
- */
+// 8) Register a regular user
 app.post('/register', async (req, res) => {
   const { email, password, username, surname, phoneno, school } = req.body;
   if (!email || !password || !username) {
@@ -135,7 +187,6 @@ app.post('/register', async (req, res) => {
       surname: surname || "",
       phoneno: phoneno || "",
       school: school || "",
-      // Regular users: no balance or address
       ordernumber: 0,
       totalorder: 0,
       debt: 0,
@@ -150,16 +201,12 @@ app.post('/register', async (req, res) => {
     });
     res.status(200).json({ message: 'User registered successfully. Verification email sent.' });
   } catch (error) {
-    console.error('Registration error:', error);
+    console.error('User registration error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-/**
- * 8) Register a vendor
- * Expected fields: email, password, phoneno, surname, firstname, businessname, businessCategory, selectedSchool, address, profilepic
- * Vendors have a balance field (initialized to 0).
- */
+// 9) Register a vendor
 app.post('/vendor/register', async (req, res) => {
   const { email, password, phoneno, surname, firstname, businessname, businessCategory, selectedSchool, address, profilepic } = req.body;
   if (!email || !password || !phoneno || !surname || !firstname || !businessname || !businessCategory || !selectedSchool || !address || !profilepic) {
@@ -208,11 +255,7 @@ app.post('/vendor/register', async (req, res) => {
   }
 });
 
-/**
- * 9) Register a rider
- * Expected fields: email, password, phoneno, surname, firstname, school, address
- * Riders have a balance field (initialized to 0).
- */
+// 10) Register a rider
 app.post('/rider/register', async (req, res) => {
   const { email, password, phoneno, surname, firstname, school, address } = req.body;
   if (!email || !password || !phoneno || !surname || !firstname || !school || !address) {
@@ -234,7 +277,7 @@ app.post('/rider/register', async (req, res) => {
     await db.collection('users').add({
       uid: userRecord.uid,
       email: userRecord.email,
-      role: 'rider', // or "driver" if preferred
+      role: 'rider',
       phoneno,
       surname,
       firstname,
@@ -257,9 +300,45 @@ app.post('/rider/register', async (req, res) => {
   }
 });
 
-/**
- * 10) Delete unverified user endpoint.
- */
+// 11) Forgot Password Endpoint
+app.post('/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Please provide your email address.' });
+  }
+  try {
+    // Ensure user exists and is verified
+    const user = await auth.getUserByEmail(email);
+    if (!user.emailVerified) {
+      return res.status(400).json({ error: 'Your email is not verified. Please verify your email before resetting your password.' });
+    }
+    const resetLink = await auth.generatePasswordResetLink(email, {
+      url: process.env.PASSWORD_RESET_CONTINUE_URL || "https://schoolchow.com/resetpassword",
+      handleCodeInApp: false,
+    });
+    console.log("Generated Password Reset Link:", resetLink);
+    // Send password reset email using a custom template
+    const resetEmailHTML = getPasswordResetEmailTemplate(resetLink, user.displayName || "User");
+    await transporter.sendMail({
+      from: `"School Chow" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: 'Reset Your Password - School Chow',
+      html: resetEmailHTML,
+    });
+    res.status(200).json({ message: 'Password reset email sent successfully.' });
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    if (error.code === "auth/invalid-email") {
+      return res.status(400).json({ error: "The email address is improperly formatted." });
+    } else if (error.code === "auth/user-not-found") {
+      return res.status(400).json({ error: "No user found with this email address." });
+    } else {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+});
+
+// 12) Delete Unverified User Endpoint
 app.delete("/delete-unverified", async (req, res) => {
   try {
     const { email } = req.body;
@@ -280,9 +359,7 @@ app.delete("/delete-unverified", async (req, res) => {
   }
 });
 
-/**
- * 11) Start the server
- */
+// 13) Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
