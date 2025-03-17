@@ -277,7 +277,7 @@ app.post('/rider/register', async (req, res) => {
     await db.collection('users').add({
       uid: userRecord.uid,
       email: userRecord.email,
-      role: 'rider',
+      role: 'driver',
       phoneno,
       surname,
       firstname,
