@@ -190,6 +190,7 @@ app.post('/register', async (req, res) => {
       ordernumber: 0,
       totalorder: 0,
       debt: 0,
+      joinedon: admin.firestore.FieldValue.serverTimestamp() // added joinedon field
     });
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, username);
@@ -239,6 +240,7 @@ app.post('/vendor/register', async (req, res) => {
       businesscategory: businessCategory,
       now: 'open',
       balance: 0,
+      joinedon: admin.firestore.FieldValue.serverTimestamp() // added joinedon field
     });
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, firstname);
@@ -284,6 +286,7 @@ app.post('/rider/register', async (req, res) => {
       school,
       address,
       balance: 0,
+      joinedon: admin.firestore.FieldValue.serverTimestamp() // added joinedon field
     });
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, firstname);
