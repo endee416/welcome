@@ -363,7 +363,7 @@ app.delete("/delete-unverified", async (req, res) => {
 });
 
 // --- Admin PIN Login Endpoint ---
-app.post('/admin/login', (req, res) => {
+/*app.post('/admin/login', (req, res) => {
   const { pin } = req.body;
   if (!pin) {
     return res.status(400).json({ error: 'Admin PIN is required.' });
@@ -374,7 +374,7 @@ app.post('/admin/login', (req, res) => {
   } else {
     return res.status(401).json({ success: false, error: 'Invalid PIN.' });
   }
-});
+});*/
 
 // 13) Start the server
 const PORT = process.env.PORT || 3000;
