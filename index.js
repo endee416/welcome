@@ -8,20 +8,30 @@ const admin = require("firebase-admin");
 const app = express();
 app.use(bodyParser.json());
 
-/* ----------------------------- Health ----------------------------- */
+// ---- Health ----
 app.get("/", (_req, res) => res.status(200).send("OK"));
 app.get("/healthz", (_req, res) => res.status(200).type("text/plain").send("ok"));
 
-/* ----------------------- Firebase Admin init ---------------------- */
+/* ========================= Firebase Admin ========================= */
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "{}");
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const auth = admin.auth();
 const db = admin.firestore();
 
-/* -------------------------- Resend helper ------------------------- */
+/* ========================= Deliverability =========================
+   - Use your verified domain for From (DKIM/SPF/DMARC must pass)
+   - Reply-To should be a monitored mailbox
+   - Add List-Unsubscribe (mailto + HTTP)
+   - Keep content neutral; only one clickable URL in body
+   ================================================================ */
+
+// ---- Resend (HTTP) ----
 async function sendEmailViaResend({ to, subject, html, text }) {
-  const apiKey = process.env.RESEND_API_KEY;            // re_************************
-  const from = process.env.EMAIL_FROM;                  // e.g. 'School Chow <support@schoolchow.com>'
+  const apiKey = process.env.RESEND_API_KEY;               // re_************************
+  const from = process.env.EMAIL_FROM;                     // 'School Chow <support@schoolchow.com>'
+  const replyTo = process.env.REPLY_TO || "support@schoolchow.com";
+  const unsubHttp = process.env.UNSUB_HTTP_URL || "https://schoolchow.com/unsubscribe"; // optional
+  const unsubMail = process.env.UNSUB_MAILTO || "mailto:support@schoolchow.com?subject=Unsubscribe";
   const messageStream = process.env.RESEND_MESSAGE_STREAM || "outbound";
 
   if (!apiKey) throw new Error("RESEND_API_KEY not set");
@@ -30,7 +40,14 @@ async function sendEmailViaResend({ to, subject, html, text }) {
     throw new Error("to, subject and html or text are required");
   }
 
-  const body = { from, to, subject, html, text, messageStream };
+  // Headers help deliverability; "List-Unsubscribe" is recommended for transactional too
+  const headers = {
+    "Reply-To": replyTo,
+    "List-Unsubscribe": `<${unsubMail}>, <${unsubHttp}>`,
+    // DO NOT set "Precedence: bulk" (that would hurt)
+  };
+
+  const body = { from, to, subject, html, text, headers, messageStream };
 
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -45,116 +62,181 @@ async function sendEmailViaResend({ to, subject, html, text }) {
     const errText = await r.text().catch(() => "");
     throw new Error(`Resend ${r.status}: ${errText}`);
   }
-  return r.json(); // { id: "...", ... }
+  return r.json(); // { id, ... }
 }
 
-/* -------------------- Firebase action links ---------------------- */
+/* ==================== Firebase Action Links ===================== */
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
     url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyemail",
     handleCodeInApp: false,
   };
-  const link = await auth.generateEmailVerificationLink(email, actionCodeSettings);
-  return link;
+  return auth.generateEmailVerificationLink(email, actionCodeSettings);
 }
+
 async function generatePasswordResetLink(email) {
   const actionCodeSettings = {
     url: process.env.PASSWORD_RESET_CONTINUE_URL || "https://schoolchow.com/resetpassword",
     handleCodeInApp: false,
   };
-  const link = await auth.generatePasswordResetLink(email, actionCodeSettings);
-  return link;
+  return auth.generatePasswordResetLink(email, actionCodeSettings);
 }
 
-/* -------------------- Spam-safe email templates ------------------- */
-// Keep tone neutral, no emojis, no images, one link, include text parts.
+/* ===================== Email Templates (Safe) =====================
 
-function getVerificationEmailHTML(verificationLink, username) {
-  const safeUser = String(username || "there");
+   Goals:
+   - Keep your header/logo/button/footer design
+   - Neutral copy; no emojis/caps/hype
+   - One hyperlink only (the primary action). The fallback URL is shown as text.
+   - System fonts; light CSS; small, single logo
+   - Plain-text part provided
+=================================================================== */
+
+function esc(s = "") {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+function verificationHTML({ link, username }) {
+  const u = esc(username || "there");
   const year = new Date().getFullYear();
+  // IMPORTANT: Only the button is a clickable link. The fallback shows the URL as plain text (no <a>).
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<title>Verify your email address</title>
-<meta name="color-scheme" content="light dark">
-<style>
-  body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:0; padding:24px; background:#fff; color:#111; }
-  .box { max-width: 600px; margin: 0 auto; }
-  a.button { display:inline-block; padding:10px 16px; border:1px solid #0c513f; text-decoration:none; color:#0c513f; border-radius:6px; }
-  .muted { color:#666; font-size:12px; margin-top:16px; }
-  .link { word-break: break-all; }
-</style></head>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Verify your email</title>
+  <meta name="color-scheme" content="light dark">
+  <style>
+    body{margin:0;padding:0;background:#f6f7f9;color:#111;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;}
+    .wrap{max-width:620px;margin:0 auto;padding:24px;}
+    .card{background:#fff;border:1px solid #e6e7eb;border-radius:10px;overflow:hidden}
+    .header{background:#0c513f;padding:20px;text-align:center}
+    .brand{display:inline-block;line-height:0}
+    .brand img{max-width:160px;height:auto}
+    .content{padding:28px}
+    h1{font-size:22px;margin:0 0 12px 0;color:#0c513f}
+    .hello{font-size:18px;margin:0 0 12px 0}
+    p{margin:0 0 12px 0}
+    .btn{display:inline-block;padding:12px 18px;border-radius:6px;border:1px solid #0c513f;text-decoration:none;color:#fff;background:#0c513f}
+    .muted{color:#666;font-size:13px}
+    .fallback{word-break:break-all;font-size:13px}
+    .footer{padding:16px 20px;background:#fafbfc;border-top:1px solid #eef0f3;font-size:12px;color:#666}
+  </style>
+</head>
 <body>
-  <div class="box">
-    <h1>Verify your email</h1>
-    <p>Hi ${safeUser},</p>
-    <p>To finish setting up your School Chow account, please confirm that this email belongs to you.</p>
-    <p><a class="button" href="${verificationLink}">Verify email</a></p>
-    <p>If the button does not work, copy and paste this link:</p>
-    <p class="link">${verificationLink}</p>
-    <p class="muted">If you did not create an account, you can ignore this message.</p>
-    <p class="muted">School Chow • support@schoolchow.com • © ${year}</p>
+  <div class="wrap">
+    <div class="card">
+      <div class="header">
+        <a class="brand" href="https://schoolchow.com" target="_blank" rel="noopener">
+          <img src="https://schoolchow.com/verifyemail/logo.png" alt="School Chow">
+        </a>
+      </div>
+      <div class="content">
+        <h1>Verify your email</h1>
+        <p class="hello">Hi ${u},</p>
+        <p>To finish setting up your School Chow account, please confirm your email address.</p>
+        <p style="margin-top:16px;margin-bottom:16px;">
+          <a class="btn" href="${esc(link)}">Verify email</a>
+        </p>
+        <p class="muted">If the button doesn’t work, copy and paste this link into your browser:</p>
+        <p class="fallback">${esc(link)}</p>
+        <p class="muted">If you didn’t create an account, you can ignore this message.</p>
+      </div>
+      <div class="footer">
+        School Chow • support@schoolchow.com • © ${year}
+      </div>
+    </div>
   </div>
-</body></html>`;
+</body>
+</html>`;
 }
-function getVerificationEmailTEXT(verificationLink, username) {
-  const safeUser = String(username || "there");
+
+function verificationTEXT({ link, username }) {
+  const u = String(username || "there");
   return `Verify your email
 
-Hi ${safeUser},
+Hi ${u},
 
 To finish setting up your School Chow account, confirm your email:
 
-${verificationLink}
+${link}
 
-If you did not create an account, you can ignore this message.
+If you didn’t create an account, you can ignore this message.
 
 School Chow • support@schoolchow.com`;
 }
 
-function getResetEmailHTML(resetLink, username) {
-  const safeUser = String(username || "there");
+function resetHTML({ link, username }) {
+  const u = esc(username || "there");
   const year = new Date().getFullYear();
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<title>Reset your password</title>
-<meta name="color-scheme" content="light dark">
-<style>
-  body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:0; padding:24px; background:#fff; color:#111; }
-  .box { max-width: 600px; margin: 0 auto; }
-  a.button { display:inline-block; padding:10px 16px; border:1px solid #0c513f; text-decoration:none; color:#0c513f; border-radius:6px; }
-  .muted { color:#666; font-size:12px; margin-top:16px; }
-  .link { word-break: break-all; }
-</style></head>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Reset your password</title>
+  <meta name="color-scheme" content="light dark">
+  <style>
+    body{margin:0;padding:0;background:#f6f7f9;color:#111;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;}
+    .wrap{max-width:620px;margin:0 auto;padding:24px;}
+    .card{background:#fff;border:1px solid #e6e7eb;border-radius:10px;overflow:hidden}
+    .header{background:#0c513f;padding:20px;text-align:center}
+    .brand{display:inline-block;line-height:0}
+    .brand img{max-width:160px;height:auto}
+    .content{padding:28px}
+    h1{font-size:22px;margin:0 0 12px 0;color:#0c513f}
+    .hello{font-size:18px;margin:0 0 12px 0}
+    p{margin:0 0 12px 0}
+    .btn{display:inline-block;padding:12px 18px;border-radius:6px;border:1px solid #0c513f;text-decoration:none;color:#fff;background:#0c513f}
+    .muted{color:#666;font-size:13px}
+    .fallback{word-break:break-all;font-size:13px}
+    .footer{padding:16px 20px;background:#fafbfc;border-top:1px solid #eef0f3;font-size:12px;color:#666}
+  </style>
+</head>
 <body>
-  <div class="box">
-    <h1>Reset your password</h1>
-    <p>Hi ${safeUser},</p>
-    <p>You requested a password reset for your School Chow account.</p>
-    <p><a class="button" href="${resetLink}">Reset password</a></p>
-    <p>If the button does not work, copy and paste this link:</p>
-    <p class="link">${resetLink}</p>
-    <p class="muted">If you did not request this, you can ignore this message.</p>
-    <p class="muted">School Chow • support@schoolchow.com • © ${year}</p>
+  <div class="wrap">
+    <div class="card">
+      <div class="header">
+        <a class="brand" href="https://schoolchow.com" target="_blank" rel="noopener">
+          <img src="https://schoolchow.com/verifyemail/logo.png" alt="School Chow">
+        </a>
+      </div>
+      <div class="content">
+        <h1>Reset your password</h1>
+        <p class="hello">Hi ${u},</p>
+        <p>You requested a password reset for your School Chow account.</p>
+        <p style="margin-top:16px;margin-bottom:16px;">
+          <a class="btn" href="${esc(link)}">Reset password</a>
+        </p>
+        <p class="muted">If the button doesn’t work, copy and paste this link into your browser:</p>
+        <p class="fallback">${esc(link)}</p>
+        <p class="muted">If you didn’t request this, you can ignore this message.</p>
+      </div>
+      <div class="footer">
+        School Chow • support@schoolchow.com • © ${year}
+      </div>
+    </div>
   </div>
-</body></html>`;
+</body>
+</html>`;
 }
-function getResetEmailTEXT(resetLink, username) {
-  const safeUser = String(username || "there");
+
+function resetTEXT({ link, username }) {
+  const u = String(username || "there");
   return `Reset your password
 
-Hi ${safeUser},
+Hi ${u},
 
 You requested a password reset for your School Chow account.
 
 Reset link:
-${resetLink}
+${link}
 
-If you did not request this, you can ignore this message.
+If you didn’t request this, you can ignore this message.
 
 School Chow • support@schoolchow.com`;
 }
 
-/* ------------------------ Utilities / cleanup ---------------------- */
+/* ========================= Helper: cleanup ========================= */
 async function deleteUserAccount(user) {
   if (!user) return;
   const snap = await db.collection("users").where("uid", "==", user.uid).get();
@@ -162,9 +244,9 @@ async function deleteUserAccount(user) {
   await auth.deleteUser(user.uid);
 }
 
-/* ------------------------------ Routes ---------------------------- */
+/* ============================== Routes ============================= */
 
-// Regular user register
+// Register (regular user)
 app.post("/register", async (req, res) => {
   const { email, password, username, surname, phoneno, school } = req.body || {};
   if (!email || !password || !username) {
@@ -201,12 +283,12 @@ app.post("/register", async (req, res) => {
       joinedon: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    const verificationLink = await generateVerificationLink(email);
+    const link = await generateVerificationLink(email);
     await sendEmailViaResend({
       to: email,
-      subject: "Verify your email address",
-      html: getVerificationEmailHTML(verificationLink, username),
-      text: getVerificationEmailTEXT(verificationLink, username),
+      subject: "Verify your email",
+      html: verificationHTML({ link, username }),
+      text: verificationTEXT({ link, username }),
     });
 
     return res.status(200).json({ message: "User registered successfully. Verification email sent." });
@@ -256,12 +338,12 @@ app.post("/vendor/register", async (req, res) => {
       joinedon: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    const verificationLink = await generateVerificationLink(email);
+    const link = await generateVerificationLink(email);
     await sendEmailViaResend({
       to: email,
-      subject: "Verify your email address",
-      html: getVerificationEmailHTML(verificationLink, firstname),
-      text: getVerificationEmailTEXT(verificationLink, firstname),
+      subject: "Verify your email",
+      html: verificationHTML({ link, username: firstname }),
+      text: verificationTEXT({ link, username: firstname }),
     });
 
     return res.status(200).json({ message: "Vendor registered successfully. Verification email sent." });
@@ -307,12 +389,12 @@ app.post("/rider/register", async (req, res) => {
       joinedon: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    const verificationLink = await generateVerificationLink(email);
+    const link = await generateVerificationLink(email);
     await sendEmailViaResend({
       to: email,
-      subject: "Verify your email address",
-      html: getVerificationEmailHTML(verificationLink, firstname),
-      text: getVerificationEmailTEXT(verificationLink, firstname),
+      subject: "Verify your email",
+      html: verificationHTML({ link, username: firstname }),
+      text: verificationTEXT({ link, username: firstname }),
     });
 
     return res.status(200).json({ message: "Rider registered successfully. Verification email sent." });
@@ -331,12 +413,12 @@ app.post("/forgot-password", async (req, res) => {
     if (!user.emailVerified) {
       return res.status(400).json({ error: "Your email is not verified. Please verify your email before resetting your password." });
     }
-    const resetLink = await generatePasswordResetLink(email);
+    const link = await generatePasswordResetLink(email);
     await sendEmailViaResend({
       to: email,
       subject: "Reset your password",
-      html: getResetEmailHTML(resetLink, user.displayName || "there"),
-      text: getResetEmailTEXT(resetLink, user.displayName || "there"),
+      html: resetHTML({ link, username: user.displayName || "there" }),
+      text: resetTEXT({ link, username: user.displayName || "there" }),
     });
 
     return res.status(200).json({ message: "Password reset email sent successfully." });
@@ -352,7 +434,7 @@ app.post("/forgot-password", async (req, res) => {
   }
 });
 
-// Delete unverified user by email
+// Delete unverified by email
 app.delete("/delete-unverified", async (req, res) => {
   try {
     const { email } = req.body || {};
