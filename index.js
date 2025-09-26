@@ -1,4 +1,6 @@
+// index.js
 require("dotenv").config();
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const admin = require("firebase-admin");
@@ -6,16 +8,20 @@ const admin = require("firebase-admin");
 const app = express();
 app.use(bodyParser.json());
 
-/* ---------- Firebase Admin ---------- */
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+/* ----------------------------- Health ----------------------------- */
+app.get("/", (_req, res) => res.status(200).send("OK"));
+app.get("/healthz", (_req, res) => res.status(200).type("text/plain").send("ok"));
+
+/* ----------------------- Firebase Admin init ---------------------- */
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "{}");
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const auth = admin.auth();
 const db = admin.firestore();
 
-/* ---------- Resend helper (HTTP API) ---------- */
+/* -------------------------- Resend helper ------------------------- */
 async function sendEmailViaResend({ to, subject, html, text }) {
   const apiKey = process.env.RESEND_API_KEY;            // re_************************
-  const from = process.env.EMAIL_FROM;                  // e.g. 'School Chow <no-reply@yourdomain.com>'
+  const from = process.env.EMAIL_FROM;                  // e.g. 'School Chow <support@schoolchow.com>'
   const messageStream = process.env.RESEND_MESSAGE_STREAM || "outbound";
 
   if (!apiKey) throw new Error("RESEND_API_KEY not set");
@@ -39,17 +45,16 @@ async function sendEmailViaResend({ to, subject, html, text }) {
     const errText = await r.text().catch(() => "");
     throw new Error(`Resend ${r.status}: ${errText}`);
   }
-  return r.json(); // { id, ... }
+  return r.json(); // { id: "...", ... }
 }
 
-/* ---------- Firebase action links ---------- */
+/* -------------------- Firebase action links ---------------------- */
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
     url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyemail",
     handleCodeInApp: false,
   };
   const link = await auth.generateEmailVerificationLink(email, actionCodeSettings);
-  console.log("Generated Verification Link:", link);
   return link;
 }
 async function generatePasswordResetLink(email) {
@@ -58,100 +63,110 @@ async function generatePasswordResetLink(email) {
     handleCodeInApp: false,
   };
   const link = await auth.generatePasswordResetLink(email, actionCodeSettings);
-  console.log("Generated Password Reset Link:", link);
   return link;
 }
 
-/* ---------- Email templates ---------- */
-function getVerificationEmailTemplate(verificationLink, username) {
-  return `
-  <!DOCTYPE html>
-  <html lang="en"><head><meta charset="utf-8">
-    <title>Verify Your Email - School Chow</title>
-    <style>
-      body { font-family: 'Kadwa', sans-serif; margin:0; padding:0; background:#f7f7f7; }
-      .container { max-width:600px; margin:0 auto; background:#fff; border-radius:8px; overflow:hidden; }
-      .header { text-align:center; padding:20px; background:#0c513f; }
-      .header img { max-width:150px; display:block; margin:0 auto; }
-      .content { padding:30px; text-align:center; }
-      .content h1 { font-size:2.5rem; margin-bottom:.5em; color:#0c513f; }
-      .content p { font-size:1.2rem; line-height:1.6; color:#444; }
-      .button { background:#0c513f; color:#fff; padding:12px 20px; text-decoration:none; border-radius:5px; display:inline-block; margin:20px 0; }
-      .footer { background:#eee; padding:15px; text-align:center; font-size:12px; color:#888; }
-      @media (max-width:600px){ .content h1{font-size:2rem;} .content p{font-size:1rem;} }
-    </style>
-    <link href="https://fonts.googleapis.com/css2?family=Kadwa&display=swap" rel="stylesheet">
-  </head>
-  <body>
-    <div class="container">
-      <div class="header">
-        <img src="https://schoolchow.com/verifyemail/logo.png" alt="">
-      </div>
-      <div class="content">
-        <h1>Welcome to School Chow, ${username}!</h1>
-        <p>You’re this close 🤏 to unlocking the tastiest student discounts, the fastest food deliveries, and the best local eats! But first, let’s make sure it’s really you.</p>
-        <a class="button" href="${verificationLink}">Verify Email</a>
-      </div>
-      <div class="footer">&copy; ${new Date().getFullYear()} School Chow. All rights reserved.</div>
-    </div>
-  </body></html>`;
+/* -------------------- Spam-safe email templates ------------------- */
+// Keep tone neutral, no emojis, no images, one link, include text parts.
+
+function getVerificationEmailHTML(verificationLink, username) {
+  const safeUser = String(username || "there");
+  const year = new Date().getFullYear();
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Verify your email address</title>
+<meta name="color-scheme" content="light dark">
+<style>
+  body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:0; padding:24px; background:#fff; color:#111; }
+  .box { max-width: 600px; margin: 0 auto; }
+  a.button { display:inline-block; padding:10px 16px; border:1px solid #0c513f; text-decoration:none; color:#0c513f; border-radius:6px; }
+  .muted { color:#666; font-size:12px; margin-top:16px; }
+  .link { word-break: break-all; }
+</style></head>
+<body>
+  <div class="box">
+    <h1>Verify your email</h1>
+    <p>Hi ${safeUser},</p>
+    <p>To finish setting up your School Chow account, please confirm that this email belongs to you.</p>
+    <p><a class="button" href="${verificationLink}">Verify email</a></p>
+    <p>If the button does not work, copy and paste this link:</p>
+    <p class="link">${verificationLink}</p>
+    <p class="muted">If you did not create an account, you can ignore this message.</p>
+    <p class="muted">School Chow • support@schoolchow.com • © ${year}</p>
+  </div>
+</body></html>`;
 }
-function getPasswordResetEmailTemplate(resetLink, username) {
-  return `
-  <!DOCTYPE html>
-  <html lang="en"><head><meta charset="utf-8">
-    <title>Reset Your Password - School Chow</title>
-    <style>
-      body { font-family: 'Kadwa', sans-serif; margin:0; padding:0; background:#f7f7f7; }
-      .container { max-width:600px; margin:0 auto; background:#fff; border-radius:8px; overflow:hidden; }
-      .header { text-align:center; padding:20px; background:#0c513f; }
-      .header img { max-width:150px; display:block; margin:0 auto; }
-      .content { padding:30px; text-align:center; }
-      .content h1 { font-size:2.5rem; margin-bottom:.5em; color:#0c513f; }
-      .content p { font-size:1.2rem; line-height:1.6; color:#444; }
-      .button { background:#0c513f; color:#fff; padding:12px 20px; text-decoration:none; border-radius:5px; display:inline-block; margin:20px 0; }
-      .footer { background:#eee; padding:15px; text-align:center; font-size:12px; color:#888; }
-      @media (max-width:600px){ .content h1{font-size:2rem;} .content p{font-size:1rem;} }
-    </style>
-    <link href="https://fonts.googleapis.com/css2?family=Kadwa&display=swap" rel="stylesheet">
-  </head>
-  <body>
-    <div class="container">
-      <div class="header">
-        <img src="https://schoolchow.com/verifyemail/logo.png" alt="">
-      </div>
-      <div class="content">
-        <h1>Reset Your Password!</h1>
-        <p>It looks like you requested a password reset. Click the button below to reset your password.</p>
-        <a class="button" href="${resetLink}">Reset Password</a>
-      </div>
-      <div class="footer">&copy; ${new Date().getFullYear()} School Chow. All rights reserved.</div>
-    </div>
-  </body></html>`;
+function getVerificationEmailTEXT(verificationLink, username) {
+  const safeUser = String(username || "there");
+  return `Verify your email
+
+Hi ${safeUser},
+
+To finish setting up your School Chow account, confirm your email:
+
+${verificationLink}
+
+If you did not create an account, you can ignore this message.
+
+School Chow • support@schoolchow.com`;
 }
 
-/* ---------- Delete unverified user + profile ---------- */
+function getResetEmailHTML(resetLink, username) {
+  const safeUser = String(username || "there");
+  const year = new Date().getFullYear();
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Reset your password</title>
+<meta name="color-scheme" content="light dark">
+<style>
+  body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:0; padding:24px; background:#fff; color:#111; }
+  .box { max-width: 600px; margin: 0 auto; }
+  a.button { display:inline-block; padding:10px 16px; border:1px solid #0c513f; text-decoration:none; color:#0c513f; border-radius:6px; }
+  .muted { color:#666; font-size:12px; margin-top:16px; }
+  .link { word-break: break-all; }
+</style></head>
+<body>
+  <div class="box">
+    <h1>Reset your password</h1>
+    <p>Hi ${safeUser},</p>
+    <p>You requested a password reset for your School Chow account.</p>
+    <p><a class="button" href="${resetLink}">Reset password</a></p>
+    <p>If the button does not work, copy and paste this link:</p>
+    <p class="link">${resetLink}</p>
+    <p class="muted">If you did not request this, you can ignore this message.</p>
+    <p class="muted">School Chow • support@schoolchow.com • © ${year}</p>
+  </div>
+</body></html>`;
+}
+function getResetEmailTEXT(resetLink, username) {
+  const safeUser = String(username || "there");
+  return `Reset your password
+
+Hi ${safeUser},
+
+You requested a password reset for your School Chow account.
+
+Reset link:
+${resetLink}
+
+If you did not request this, you can ignore this message.
+
+School Chow • support@schoolchow.com`;
+}
+
+/* ------------------------ Utilities / cleanup ---------------------- */
 async function deleteUserAccount(user) {
   if (!user) return;
-  try {
-    const snapshot = await db.collection("users").where("uid", "==", user.uid).get();
-    if (!snapshot.empty) {
-      for (const doc of snapshot.docs) await doc.ref.delete();
-      console.log(`Deleted Firestore entry for uid: ${user.uid}`);
-    }
-    await auth.deleteUser(user.uid);
-    console.log(`Deleted unverified user: ${user.email}`);
-  } catch (error) {
-    console.error("Error deleting user account:", error);
-    throw error;
-  }
+  const snap = await db.collection("users").where("uid", "==", user.uid).get();
+  for (const doc of snap.docs) await doc.ref.delete();
+  await auth.deleteUser(user.uid);
 }
 
-/* ---------- Endpoints ---------- */
+/* ------------------------------ Routes ---------------------------- */
 
 // Regular user register
 app.post("/register", async (req, res) => {
-  const { email, password, username, surname, phoneno, school } = req.body;
+  const { email, password, username, surname, phoneno, school } = req.body || {};
   if (!email || !password || !username) {
     return res.status(400).json({ error: "Please provide email, password, and username." });
   }
@@ -159,9 +174,10 @@ app.post("/register", async (req, res) => {
     let existingUser;
     try {
       existingUser = await auth.getUserByEmail(email);
-    } catch (error) {
-      if (error.code !== "auth/user-not-found") throw error;
+    } catch (e) {
+      if (e.code !== "auth/user-not-found") throw e;
     }
+
     if (existingUser && !existingUser.emailVerified) {
       await deleteUserAccount(existingUser);
     } else if (existingUser && existingUser.emailVerified) {
@@ -181,35 +197,28 @@ app.post("/register", async (req, res) => {
       ordernumber: 0,
       totalorder: 0,
       debt: 0,
-      joinedon: admin.firestore.FieldValue.serverTimestamp(),
       emailVerified: false,
+      joinedon: admin.firestore.FieldValue.serverTimestamp(),
     });
 
     const verificationLink = await generateVerificationLink(email);
-    const emailHTML = getVerificationEmailTemplate(verificationLink, username);
+    await sendEmailViaResend({
+      to: email,
+      subject: "Verify your email address",
+      html: getVerificationEmailHTML(verificationLink, username),
+      text: getVerificationEmailTEXT(verificationLink, username),
+    });
 
-    try {
-      await sendEmailViaResend({
-        to: email,
-        subject: "Verify Your Email for School Chow",
-        html: emailHTML,
-      });
-    } catch (e) {
-      console.error("[Resend] send failed:", e.message);
-      try { await deleteUserAccount(userRecord); } catch (_) {}
-      return res.status(502).json({ error: "Could not send verification email. Please try again." });
-    }
-
-    res.status(200).json({ message: "User registered successfully. Verification email sent." });
+    return res.status(200).json({ message: "User registered successfully. Verification email sent." });
   } catch (error) {
     console.error("User registration error:", error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message || "Internal error" });
   }
 });
 
 // Vendor register
 app.post("/vendor/register", async (req, res) => {
-  const { email, password, phoneno, surname, firstname, businessname, businessCategory, selectedSchool, address, profilepic } = req.body;
+  const { email, password, phoneno, surname, firstname, businessname, businessCategory, selectedSchool, address, profilepic } = req.body || {};
   if (!email || !password || !phoneno || !surname || !firstname || !businessname || !businessCategory || !selectedSchool || !address || !profilepic) {
     return res.status(400).json({ error: "Please fill in all fields for vendor registration." });
   }
@@ -217,9 +226,10 @@ app.post("/vendor/register", async (req, res) => {
     let existingUser;
     try {
       existingUser = await auth.getUserByEmail(email);
-    } catch (error) {
-      if (error.code !== "auth/user-not-found") throw error;
+    } catch (e) {
+      if (e.code !== "auth/user-not-found") throw e;
     }
+
     if (existingUser && !existingUser.emailVerified) {
       await deleteUserAccount(existingUser);
     } else if (existingUser && existingUser.emailVerified) {
@@ -242,35 +252,28 @@ app.post("/vendor/register", async (req, res) => {
       businesscategory: businessCategory,
       now: "open",
       balance: 0,
-      joinedon: admin.firestore.FieldValue.serverTimestamp(),
       emailVerified: false,
+      joinedon: admin.firestore.FieldValue.serverTimestamp(),
     });
 
     const verificationLink = await generateVerificationLink(email);
-    const emailHTML = getVerificationEmailTemplate(verificationLink, firstname);
+    await sendEmailViaResend({
+      to: email,
+      subject: "Verify your email address",
+      html: getVerificationEmailHTML(verificationLink, firstname),
+      text: getVerificationEmailTEXT(verificationLink, firstname),
+    });
 
-    try {
-      await sendEmailViaResend({
-        to: email,
-        subject: "Verify Your Email for School Chow",
-        html: emailHTML,
-      });
-    } catch (e) {
-      console.error("[Resend] send failed:", e.message);
-      try { await deleteUserAccount(userRecord); } catch (_) {}
-      return res.status(502).json({ error: "Could not send verification email. Please try again." });
-    }
-
-    res.status(200).json({ message: "Vendor registered successfully. Verification email sent." });
+    return res.status(200).json({ message: "Vendor registered successfully. Verification email sent." });
   } catch (error) {
     console.error("Vendor registration error:", error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message || "Internal error" });
   }
 });
 
 // Rider register
 app.post("/rider/register", async (req, res) => {
-  const { email, password, phoneno, surname, firstname, school, address } = req.body;
+  const { email, password, phoneno, surname, firstname, school, address } = req.body || {};
   if (!email || !password || !phoneno || !surname || !firstname || !school || !address) {
     return res.status(400).json({ error: "Please fill in all fields for rider registration." });
   }
@@ -278,9 +281,10 @@ app.post("/rider/register", async (req, res) => {
     let existingUser;
     try {
       existingUser = await auth.getUserByEmail(email);
-    } catch (error) {
-      if (error.code !== "auth/user-not-found") throw error;
+    } catch (e) {
+      if (e.code !== "auth/user-not-found") throw e;
     }
+
     if (existingUser && !existingUser.emailVerified) {
       await deleteUserAccount(existingUser);
     } else if (existingUser && existingUser.emailVerified) {
@@ -299,35 +303,28 @@ app.post("/rider/register", async (req, res) => {
       school,
       address,
       balance: 0,
-      joinedon: admin.firestore.FieldValue.serverTimestamp(),
       emailVerified: false,
+      joinedon: admin.firestore.FieldValue.serverTimestamp(),
     });
 
     const verificationLink = await generateVerificationLink(email);
-    const emailHTML = getVerificationEmailTemplate(verificationLink, firstname);
+    await sendEmailViaResend({
+      to: email,
+      subject: "Verify your email address",
+      html: getVerificationEmailHTML(verificationLink, firstname),
+      text: getVerificationEmailTEXT(verificationLink, firstname),
+    });
 
-    try {
-      await sendEmailViaResend({
-        to: email,
-        subject: "Verify Your Email for School Chow",
-        html: emailHTML,
-      });
-    } catch (e) {
-      console.error("[Resend] send failed:", e.message);
-      try { await deleteUserAccount(userRecord); } catch (_) {}
-      return res.status(502).json({ error: "Could not send verification email. Please try again." });
-    }
-
-    res.status(200).json({ message: "Rider registered successfully. Verification email sent." });
+    return res.status(200).json({ message: "Rider registered successfully. Verification email sent." });
   } catch (error) {
     console.error("Rider registration error:", error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message || "Internal error" });
   }
 });
 
-// Forgot Password
+// Forgot password
 app.post("/forgot-password", async (req, res) => {
-  const { email } = req.body;
+  const { email } = req.body || {};
   if (!email) return res.status(400).json({ error: "Please provide your email address." });
   try {
     const user = await auth.getUserByEmail(email);
@@ -335,15 +332,14 @@ app.post("/forgot-password", async (req, res) => {
       return res.status(400).json({ error: "Your email is not verified. Please verify your email before resetting your password." });
     }
     const resetLink = await generatePasswordResetLink(email);
-    const resetEmailHTML = getPasswordResetEmailTemplate(resetLink, user.displayName || "User");
-
     await sendEmailViaResend({
       to: email,
-      subject: "Reset Your Password - School Chow",
-      html: resetEmailHTML,
+      subject: "Reset your password",
+      html: getResetEmailHTML(resetLink, user.displayName || "there"),
+      text: getResetEmailTEXT(resetLink, user.displayName || "there"),
     });
 
-    res.status(200).json({ message: "Password reset email sent successfully." });
+    return res.status(200).json({ message: "Password reset email sent successfully." });
   } catch (error) {
     console.error("Forgot password error:", error);
     if (error.code === "auth/invalid-email") {
@@ -351,36 +347,34 @@ app.post("/forgot-password", async (req, res) => {
     } else if (error.code === "auth/user-not-found") {
       return res.status(400).json({ error: "No user found with this email address." });
     } else {
-      return res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: error.message || "Internal error" });
     }
   }
 });
 
-// Delete Unverified User
+// Delete unverified user by email
 app.delete("/delete-unverified", async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email } = req.body || {};
     if (!email) return res.status(400).json({ error: "No email provided." });
     const user = await auth.getUserByEmail(email);
     if (user.emailVerified) return res.status(400).json({ message: "User is already verified." });
-    await auth.deleteUser(user.uid);
-    const snapshot = await db.collection("users").where("uid", "==", user.uid).get();
-    snapshot.forEach((doc) => doc.ref.delete());
-    res.status(200).json({ message: "Deleted unverified user successfully." });
+    await deleteUserAccount(user);
+    return res.status(200).json({ message: "Deleted unverified user successfully." });
   } catch (error) {
     console.error("Error deleting unverified user:", error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message || "Internal error" });
   }
 });
 
 // Admin PIN
 app.post("/admin/login", (req, res) => {
-  const { pin } = req.body;
+  const { pin } = req.body || {};
   if (!pin) return res.status(400).json({ error: "Admin PIN is required." });
   if (pin === process.env.ADMIN_PIN) return res.status(200).json({ success: true, message: "PIN verified." });
   return res.status(401).json({ success: false, error: "Invalid PIN." });
 });
 
-/* ---------- Boot ---------- */
+/* ------------------------------- Boot ----------------------------- */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
