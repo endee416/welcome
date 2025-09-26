@@ -97,10 +97,13 @@ function getVerificationEmailTemplate(verificationLink, username) {
       </div>
       <div class="content">
         <h1>Welcome to School Chow, ${username}!</h1>
-        <p>
+        <p style="margin:0 0 12px;">
           Please confirm this email address to finish setting up your School Chow account.
+        </p>
+        <p style="margin:0;">
           Select <strong>Verify email</strong> to continue.
         </p>
+
         <a class="button" href="${verificationLink}">Verify Email</a>
       </div>
       <div class="footer">
@@ -143,10 +146,13 @@ function getPasswordResetEmailTemplate(resetLink, username) {
       </div>
       <div class="content">
         <h1>Reset Your Password!</h1>
-        <p>
-          You requested to reset the password for your School Chow account.
-          Select <strong>Reset password</strong> to create a new one.
-        </p>
+        <p style="margin:0 0 12px;">
+        You requested to reset the password for your School Chow account.
+      </p>
+      <p style="margin:0;">
+        Select <strong>Reset password</strong> to create a new one.
+      </p>
+
         <a class="button" href="${resetLink}">Reset Password</a>
       </div>
       <div class="footer">
