@@ -1,28 +1,22 @@
-
 require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
-const nodemailer = require("nodemailer");
+const nodemailer = require("nodemailer"); // ok to keep, even if unused
 const admin = require("firebase-admin");
 
 const app = express();
 app.use(bodyParser.json());
 
-// 1) Initialize Firebase Admin using the service account from env
+// 1) Firebase Admin
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const auth = admin.auth();
 const db = admin.firestore();
 
-
-
-
 /* ============== Resend (HTTPS API) ============== */
 async function sendEmailViaResend({ to, subject, html, text }) {
-  const apiKey = process.env.RESEND_API_KEY;           // re_********************************
-  const from = process.env.EMAIL_FROM;                 // e.g. 'School Chow <support@schoolchow.com>'
+  const apiKey = process.env.RESEND_API_KEY;         // re_********************************
+  const from = process.env.EMAIL_FROM;               // e.g. 'School Chow <support@schoolchow.com>'
   const replyTo = process.env.REPLY_TO || "support@schoolchow.com";
   const messageStream = process.env.RESEND_MESSAGE_STREAM || "outbound";
 
@@ -31,16 +25,12 @@ async function sendEmailViaResend({ to, subject, html, text }) {
 
   const headers = {
     "Reply-To": replyTo,
-    // Helps filters & compliance; harmless for transactional mails
     "List-Unsubscribe": `<mailto:${replyTo}?subject=Unsubscribe>, <https://schoolchow.com/unsubscribe>`
   };
 
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ from, to, subject, html, text, headers, messageStream }),
   });
 
@@ -51,41 +41,31 @@ async function sendEmailViaResend({ to, subject, html, text }) {
   return r.json();
 }
 
-
-// 2) Configure Nodemailer (Hostinger SMTP)
+/* 2) (Optional) Nodemailer SMTP — left as-is but not used now */
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,         // e.g., smtp.hostinger.com
-  port: Number(process.env.SMTP_PORT),   // e.g., 465 (SSL) or 587 (TLS)
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT),
   secure: Number(process.env.SMTP_PORT) === 465,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
+  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
 });
 
-// 3) Helper: Generate a Firebase verification link for email verification
+/* 3) Firebase action links */
 async function generateVerificationLink(email) {
   const actionCodeSettings = {
     url: process.env.VERIFICATION_CONTINUE_URL || "https://schoolchow.com/verifyemail",
-    handleCodeInApp: false, // standard HTTPS redirect
+    handleCodeInApp: false,
   };
-  const link = await auth.generateEmailVerificationLink(email, actionCodeSettings);
-  console.log("Generated Verification Link:", link);
-  return link;
+  return auth.generateEmailVerificationLink(email, actionCodeSettings);
 }
-
-// 4) Helper: Generate a Firebase password reset link
 async function generatePasswordResetLink(email) {
   const actionCodeSettings = {
     url: process.env.PASSWORD_RESET_CONTINUE_URL || "https://schoolchow.com/resetpassword",
     handleCodeInApp: false,
   };
-  const link = await auth.generatePasswordResetLink(email, actionCodeSettings);
-  console.log("Generated Password Reset Link:", link);
-  return link;
+  return auth.generatePasswordResetLink(email, actionCodeSettings);
 }
 
-// 5) Helper: HTML Email Template for Verification (Rider-style design)
+/* 5) Templates (unchanged styles, safer wording) */
 function getVerificationEmailTemplate(verificationLink, username) {
   return `
   <!DOCTYPE html>
@@ -118,9 +98,8 @@ function getVerificationEmailTemplate(verificationLink, username) {
       <div class="content">
         <h1>Welcome to School Chow, ${username}!</h1>
         <p>
-
           Please confirm this email address to finish setting up your School Chow account.
-          Select Verify email to continue.
+          Select <strong>Verify email</strong> to continue.
         </p>
         <a class="button" href="${verificationLink}">Verify Email</a>
       </div>
@@ -133,7 +112,6 @@ function getVerificationEmailTemplate(verificationLink, username) {
   `;
 }
 
-// 6) Helper: HTML Email Template for Password Reset
 function getPasswordResetEmailTemplate(resetLink, username) {
   return `
   <!DOCTYPE html>
@@ -167,7 +145,7 @@ function getPasswordResetEmailTemplate(resetLink, username) {
         <h1>Reset Your Password!</h1>
         <p>
           You requested to reset the password for your School Chow account.
-         Select Reset password to create a new one.
+          Select <strong>Reset password</strong> to create a new one.
         </p>
         <a class="button" href="${resetLink}">Reset Password</a>
       </div>
@@ -180,27 +158,20 @@ function getPasswordResetEmailTemplate(resetLink, username) {
   `;
 }
 
-// 7) Helper: Delete unverified user and their Firestore docs
+/* 7) Delete unverified user */
 async function deleteUserAccount(user) {
   if (!user) return;
-  try {
-    const usersRef = db.collection('users');
-    const snapshot = await usersRef.where('uid', '==', user.uid).get();
-    if (!snapshot.empty) {
-      snapshot.forEach(async (doc) => {
-        await doc.ref.delete();
-        console.log(`Deleted Firestore entry for uid: ${user.uid}`);
-      });
-    }
-    await auth.deleteUser(user.uid);
-    console.log(`Deleted unverified user: ${user.email}`);
-  } catch (error) {
-    console.error("Error deleting user account:", error);
-    throw error;
+  const usersRef = db.collection('users');
+  const snapshot = await usersRef.where('uid', '==', user.uid).get();
+  if (!snapshot.empty) {
+    for (const doc of snapshot.docs) await doc.ref.delete();
   }
+  await auth.deleteUser(user.uid);
 }
 
-// 8) Register a regular user
+/* ================= Routes ================= */
+
+// Register (regular)
 app.post('/register', async (req, res) => {
   const { email, password, username, surname, phoneno, school } = req.body;
   if (!email || !password || !username) {
@@ -218,7 +189,9 @@ app.post('/register', async (req, res) => {
     } else if (existingUser && existingUser.emailVerified) {
       return res.status(400).json({ error: 'Email is already in use and verified. Please log in.' });
     }
+
     const userRecord = await auth.createUser({ email, password, displayName: username });
+
     await db.collection('users').add({
       uid: userRecord.uid,
       email: userRecord.email,
@@ -230,16 +203,18 @@ app.post('/register', async (req, res) => {
       ordernumber: 0,
       totalorder: 0,
       debt: 0,
-      joinedon: admin.firestore.FieldValue.serverTimestamp() // added joinedon field
+      joinedon: admin.firestore.FieldValue.serverTimestamp()
     });
+
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, username);
+
     await sendEmailViaResend({
-  to: email,
-  subject: "Verify your email",     // or "Reset your password" in the reset route
-  html: emailHTML,                  // your existing HTML template (unchanged)
-  text: "If the button doesn’t work, copy and paste this link:\n\n" + verificationLinkOrResetLink
-});
+      to: email,
+      subject: "Verify your email",
+      html: emailHTML,
+      text: "If the button doesn’t work, copy and paste this link:\n\n" + verificationLink
+    });
 
     res.status(200).json({ message: 'User registered successfully. Verification email sent.' });
   } catch (error) {
@@ -248,7 +223,7 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// 9) Register a vendor
+// Register vendor
 app.post('/vendor/register', async (req, res) => {
   const { email, password, phoneno, surname, firstname, businessname, businessCategory, selectedSchool, address, profilepic } = req.body;
   if (!email || !password || !phoneno || !surname || !firstname || !businessname || !businessCategory || !selectedSchool || !address || !profilepic) {
@@ -266,7 +241,9 @@ app.post('/vendor/register', async (req, res) => {
     } else if (existingUser && existingUser.emailVerified) {
       return res.status(400).json({ error: 'Email is already in use and verified. Please log in.' });
     }
+
     const userRecord = await auth.createUser({ email, password, displayName: firstname });
+
     await db.collection('users').add({
       uid: userRecord.uid,
       email: userRecord.email,
@@ -281,16 +258,18 @@ app.post('/vendor/register', async (req, res) => {
       businesscategory: businessCategory,
       now: 'open',
       balance: 0,
-      joinedon: admin.firestore.FieldValue.serverTimestamp() // added joinedon field
+      joinedon: admin.firestore.FieldValue.serverTimestamp()
     });
+
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, firstname);
+
     await sendEmailViaResend({
-  to: email,
-  subject: "Verify your email",     // or "Reset your password" in the reset route
-  html: emailHTML,                  // your existing HTML template (unchanged)
-  text: "If the button doesn’t work, copy and paste this link:\n\n" + verificationLinkOrResetLink
-});
+      to: email,
+      subject: "Verify your email",
+      html: emailHTML,
+      text: "If the button doesn’t work, copy and paste this link:\n\n" + verificationLink
+    });
 
     res.status(200).json({ message: 'Vendor registered successfully. Verification email sent.' });
   } catch (error) {
@@ -299,7 +278,7 @@ app.post('/vendor/register', async (req, res) => {
   }
 });
 
-// 10) Register a rider
+// Register rider
 app.post('/rider/register', async (req, res) => {
   const { email, password, phoneno, surname, firstname, school, address } = req.body;
   if (!email || !password || !phoneno || !surname || !firstname || !school || !address) {
@@ -317,7 +296,9 @@ app.post('/rider/register', async (req, res) => {
     } else if (existingUser && existingUser.emailVerified) {
       return res.status(400).json({ error: 'Email is already in use and verified. Please log in.' });
     }
+
     const userRecord = await auth.createUser({ email, password });
+
     await db.collection('users').add({
       uid: userRecord.uid,
       email: userRecord.email,
@@ -328,16 +309,18 @@ app.post('/rider/register', async (req, res) => {
       school,
       address,
       balance: 0,
-      joinedon: admin.firestore.FieldValue.serverTimestamp() // added joinedon field
+      joinedon: admin.firestore.FieldValue.serverTimestamp()
     });
+
     const verificationLink = await generateVerificationLink(email);
     const emailHTML = getVerificationEmailTemplate(verificationLink, firstname);
+
     await sendEmailViaResend({
-  to: email,
-  subject: "Verify your email",     // or "Reset your password" in the reset route
-  html: emailHTML,                  // your existing HTML template (unchanged)
-  text: "If the button doesn’t work, copy and paste this link:\n\n" + verificationLinkOrResetLink
-});
+      to: email,
+      subject: "Verify your email",
+      html: emailHTML,
+      text: "If the button doesn’t work, copy and paste this link:\n\n" + verificationLink
+    });
 
     res.status(200).json({ message: 'Rider registered successfully. Verification email sent.' });
   } catch (error) {
@@ -346,38 +329,25 @@ app.post('/rider/register', async (req, res) => {
   }
 });
 
-// 11) Forgot Password Endpoint
+// Forgot Password
 app.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
-  if (!email) {
-    return res.status(400).json({ error: 'Please provide your email address.' });
-  }
+  if (!email) return res.status(400).json({ error: 'Please provide your email address.' });
   try {
-    // Ensure user exists and is verified
     const user = await auth.getUserByEmail(email);
     if (!user.emailVerified) {
       return res.status(400).json({ error: 'Your email is not verified. Please verify your email before resetting your password.' });
     }
-    const resetLink = await auth.generatePasswordResetLink(email, {
-      url: process.env.PASSWORD_RESET_CONTINUE_URL || "https://schoolchow.com/resetpassword",
-      handleCodeInApp: false,
-    });
-    console.log("Generated Password Reset Link:", resetLink);
-    // Send password reset email using a custom template
+
+    const resetLink = await generatePasswordResetLink(email);
     const resetEmailHTML = getPasswordResetEmailTemplate(resetLink, user.displayName || "User");
- /*   await transporter.sendMail({
-      from: `"School Chow" <${process.env.SMTP_USER}>`,
-      to: email,
-      subject: 'Reset Your Password - School Chow',
-      html: resetEmailHTML,
-    });*/
 
     await sendEmailViaResend({
-  to: email,
-  subject: "Reset Your Password",     
-  html: resetLink,                 
-  text: "If the button doesn’t work, copy and paste this link:\n\n" + verificationLinkOrResetLink
-});
+      to: email,
+      subject: "Reset your password",
+      html: resetEmailHTML,
+      text: "If the button doesn’t work, copy and paste this link:\n\n" + resetLink
+    });
 
     res.status(200).json({ message: 'Password reset email sent successfully.' });
   } catch (error) {
@@ -392,20 +362,14 @@ app.post('/forgot-password', async (req, res) => {
   }
 });
 
-// 12) Delete Unverified User Endpoint
+// Delete Unverified
 app.delete("/delete-unverified", async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: "No email provided." });
-    }
+    if (!email) return res.status(400).json({ error: "No email provided." });
     const user = await auth.getUserByEmail(email);
-    if (user.emailVerified) {
-      return res.status(400).json({ message: "User is already verified." });
-    }
-    await auth.deleteUser(user.uid);
-    const snapshot = await db.collection("users").where("uid", "==", user.uid).get();
-    snapshot.forEach((doc) => doc.ref.delete());
+    if (user.emailVerified) return res.status(400).json({ message: "User is already verified." });
+    await deleteUserAccount(user);
     res.status(200).json({ message: "Deleted unverified user successfully." });
   } catch (error) {
     console.error("Error deleting unverified user:", error);
@@ -413,22 +377,14 @@ app.delete("/delete-unverified", async (req, res) => {
   }
 });
 
-// --- Admin PIN Login Endpoint ---
+// Admin PIN
 app.post('/admin/login', (req, res) => {
   const { pin } = req.body;
-  if (!pin) {
-    return res.status(400).json({ error: 'Admin PIN is required.' });
-  }
-  // Compare against the environment variable
-  if (pin === process.env.ADMIN_PIN) {
-    return res.status(200).json({ success: true, message: 'PIN verified.' });
-  } else {
-    return res.status(401).json({ success: false, error: 'Invalid PIN.' });
-  }
+  if (!pin) return res.status(400).json({ error: 'Admin PIN is required.' });
+  if (pin === process.env.ADMIN_PIN) return res.status(200).json({ success: true, message: 'PIN verified.' });
+  return res.status(401).json({ success: false, error: 'Invalid PIN.' });
 });
 
-// 13) Start the server
+// Boot
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
